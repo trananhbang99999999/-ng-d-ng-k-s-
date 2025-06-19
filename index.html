@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RSA File Signature System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding: 20px;
+            background-color: #65d6d1;
+        }
+        .container {
+            max-width: 800px;
+        }
+        .card {
+            margin-bottom: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .card-header {
+            background-color: #5c9bda;
+            border-bottom: 1px solid #dee2e6;
+            padding: 15px 20px;
+        }
+        .card-body {
+            padding: 20px;
+        }
+        .drag-area {
+            border: 2px dashed #0d6efd;
+            border-radius: 5px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        .drag-area.active {
+            border-color: #198754;
+            background-color: #0a0c0a;
+        }
+        .drag-area .icon {
+            font-size: 50px;
+            color: #0d6efd;
+            margin-bottom: 10px;
+        }
+        .drag-area header {
+            font-size: 20px;
+            font-weight: 500;
+            color: #0d6efd;
+        }
+        .drag-area span {
+            font-size: 16px;
+            font-weight: 400;
+            color: #6c757d;
+            margin: 10px 0 15px 0;
+        }
+        .drag-area button {
+            padding: 10px 25px;
+            font-size: 16px;
+            font-weight: 500;
+            border: none;
+            outline: none;
+            background: #0d6efd;
+            color: #fff;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .drag-area input {
+            display: none;
+        }
+        .signed-files {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .signed-file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .signed-file-item:last-child {
+            border-bottom: none;
+        }
+        .file-info {
+            flex-grow: 1;
+        }
+        .file-name {
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+        .file-meta {
+            font-size: 0.875rem;
+            color: #6c757d;
+        }
+        .file-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+        .drop-zone {
+            border: 2px dashed #ccc;
+            border-radius: 4px;
+            padding: 20px;
+            text-align: center;
+            background: #f8f9fa;
+            cursor: pointer;
+            transition: border-color 0.3s ease;
+        }
+        .drop-zone:hover {
+            border-color: #0d6efd;
+        }
+        .drop-zone.dragover {
+            border-color: #0d6efd;
+            background: #e9ecef;
+        }
+        .key-options {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .hash-options {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2 class="text-center mb-4">Ứng dụng chữ ký số</h2>
+        
+        <div class="toast-container"></div>
+        
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-warning">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Quản Lý Khóa</h5>
+            </div>
+            <div class="card-body">
+                <div class="key-options">
+                    <h6>Kích thước khóa RSA</h6>
+                    <div class="btn-group mb-3" role="group">
+                        {% for size in key_sizes %}
+                        <input type="radio" class="btn-check" name="key_size" id="key_size_{{ size }}" value="{{ size }}" {% if size == 512 %}checked{% endif %}>
+                        <label class="btn btn-outline-primary" for="key_size_{{ size }}">{{ size }}-bit</label>
+                        {% endfor %}
+                    </div>
+                    <button id="generateKeys" class="btn btn-primary">
+                        <i class="fas fa-key"></i> Tạo cặp khóa mới
+                    </button>
+                </div>
+                <div class="d-flex gap-2">
+                    <a href="{{ url_for('download_key', key_type='public') }}" class="btn btn-outline-primary">
+                        <i class="fas fa-download"></i> Tải khóa công khai
+                    </a>
+                    <a href="{{ url_for('download_key', key_type='private') }}" class="btn btn-outline-danger">
+                        <i class="fas fa-download"></i> Tải khóa riêng tư
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Ký Số File</h5>
+            </div>
+            <div class="card-body">
+                <div class="hash-options">
+                    <h6>Thuật toán hash</h6>
+                    <div class="btn-group mb-3" role="group">
+                        {% for algo in hash_algorithms %}
+                        <input type="radio" class="btn-check" name="sign_hash_algorithm" id="sign_hash_{{ algo }}" value="{{ algo }}" {% if algo == 'SHA256' %}checked{% endif %}>
+                        <label class="btn btn-outline-primary" for="sign_hash_{{ algo }}">{{ algo }}</label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="drag-area" id="signDragArea">
+                    <div class="icon"><i class="fas fa-cloud-upload-alt"></i></div>
+                    <header>Kéo & Thả File</header>
+                    <span>hoặc</span>
+                    <button>Chọn File</button>
+                    <input type="file" id="signFile" hidden>
+                </div>
+                <form id="signForm" action="{{ url_for('upload_file') }}" method="post" enctype="multipart/form-data">
+                    <input type="file" name="file" id="signFileInput" hidden>
+                    <button type="submit" class="btn btn-primary w-100" id="signButton" disabled>
+                        <i class="fas fa-signature"></i> Ký Số File
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Xác Thực Chữ Ký</h5>
+            </div>
+            <div class="card-body">
+                <div class="hash-options">
+                    <h6>Thuật toán hash</h6>
+                    <div class="btn-group mb-3" role="group">
+                        {% for algo in hash_algorithms %}
+                        <input type="radio" class="btn-check" name="verify_hash_algorithm" id="verify_hash_{{ algo }}" value="{{ algo }}" {% if algo == 'SHA256' %}checked{% endif %}>
+                        <label class="btn btn-outline-primary" for="verify_hash_{{ algo }}">{{ algo }}</label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="drag-area" id="verifyDragArea">
+                    <div class="icon"><i class="fas fa-cloud-upload-alt"></i></div>
+                    <header>Kéo & Thả File</header>
+                    <span>hoặc</span>
+                    <button>Chọn File</button>
+                    <input type="file" id="verifyFile" hidden>
+                </div>
+                <button class="btn btn-success w-100" id="verifyButton" disabled>
+                    <i class="fas fa-check-circle"></i> Xác Thực Chữ Ký
+                </button>
+                <div id="verifyResult" class="alert mt-3" style="display: none;"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">File Đã Ký Số</h5>
+            </div>
+            <div class="card-body">
+                <div class="signed-files" id="signedFilesList">
+                    {% if signed_files %}
+                        {% for filename, metadata in signed_files.items() %}
+                            <div class="signed-file-item">
+                                <div class="file-info">
+                                    <div class="file-name">{{ metadata.original_filename }}</div>
+                                    <div class="file-meta">
+                                        Đã ký: {{ metadata.timestamp }}
+                                    </div>
+                                </div>
+                                <div class="file-actions">
+                                    <a href="{{ url_for('download_signed', filename=filename) }}" class="btn btn-sm btn-primary">
+                                        <i class="fas fa-download"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-center text-muted">Chưa có file nào được ký số</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Drag and drop functionality
+        const dragAreas = document.querySelectorAll('.drag-area');
+        const signFileInput = document.getElementById('signFileInput');
+        const signButton = document.getElementById('signButton');
+        const verifyButton = document.getElementById('verifyButton');
+        const verifyResult = document.getElementById('verifyResult');
+        const signedFilesList = document.getElementById('signedFilesList');
+
+        function showToast(message, type = 'success') {
+            const toastContainer = document.querySelector('.toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast align-items-center text-white bg-${type} border-0`;
+            toast.setAttribute('role', 'alert');
+            toast.setAttribute('aria-live', 'assertive');
+            toast.setAttribute('aria-atomic', 'true');
+            
+            toast.innerHTML = `
+                <div class="d-flex">
+                    <div class="toast-body">
+                        ${message}
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                </div>
+            `;
+            
+            toastContainer.appendChild(toast);
+            const bsToast = new bootstrap.Toast(toast);
+            bsToast.show();
+            
+            toast.addEventListener('hidden.bs.toast', () => {
+                toast.remove();
+            });
+        }
+
+        function updateSignedFilesList() {
+            fetch('/list-signed')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const files = data.files;
+                        if (Object.keys(files).length === 0) {
+                            signedFilesList.innerHTML = '<div class="text-center text-muted">Chưa có file nào được ký số</div>';
+                            return;
+                        }
+                        
+                        signedFilesList.innerHTML = Object.entries(files)
+                            .map(([filename, metadata]) => `
+                                <div class="signed-file-item">
+                                    <div class="file-info">
+                                        <div class="file-name">${metadata.original_filename}</div>
+                                        <div class="file-meta">
+                                            Đã ký: ${metadata.timestamp}
+                                        </div>
+                                    </div>
+                                    <div class="file-actions">
+                                        <a href="/download-signed/${filename}" class="btn btn-sm btn-primary">
+                                            <i class="fas fa-download"></i>
+                                        </a>
+                                    </div>
+                                </div>
+                            `)
+                            .join('');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching signed files:', error);
+                });
+        }
+
+        // Generate new key pair
+        document.getElementById('generateKeys').addEventListener('click', async () => {
+            const keySize = document.querySelector('input[name="key_size"]:checked').value;
+            try {
+                const response = await fetch('/generate-keys', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `key_size=${keySize}`
+                });
+                const data = await response.json();
+                showToast(data.message, data.success ? 'success' : 'danger');
+            } catch (error) {
+                showToast('Lỗi khi tạo khóa', 'danger');
+            }
+        });
+
+        // Handle file drag and drop
+        dragAreas.forEach(area => {
+            const input = area.querySelector('input');
+            const button = area.querySelector('button');
+            const icon = area.querySelector('.icon');
+            const header = area.querySelector('header');
+
+            button.onclick = () => input.click();
+
+            input.addEventListener('change', function() {
+                if (this.files[0]) {
+                    const file = this.files[0];
+                    displayFile(file, area);
+                }
+            });
+
+            area.addEventListener('dragover', (event) => {
+                event.preventDefault();
+                area.classList.add('active');
+            });
+
+            area.addEventListener('dragleave', () => {
+                area.classList.remove('active');
+            });
+
+            area.addEventListener('drop', (event) => {
+                event.preventDefault();
+                area.classList.remove('active');
+                const file = event.dataTransfer.files[0];
+                if (file) {
+                    input.files = event.dataTransfer.files;
+                    displayFile(file, area);
+                }
+            });
+        });
+
+        function displayFile(file, area) {
+            const isSignArea = area.id === 'signDragArea';
+            const button = isSignArea ? signButton : verifyButton;
+            
+            if (file) {
+                area.querySelector('header').textContent = file.name;
+                button.disabled = false;
+                
+                if (isSignArea) {
+                    signFileInput.files = area.querySelector('input').files;
+                }
+            }
+        }
+
+        // Sign file
+        document.getElementById('signForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showToast(result.message);
+                    updateSignedFilesList();
+                    // Reset form
+                    e.target.reset();
+                    signButton.disabled = true;
+                    document.querySelector('#signDragArea header').textContent = 'Kéo & Thả File';
+                } else {
+                    showToast(result.message, 'danger');
+                }
+            } catch (error) {
+                showToast('Lỗi xử lý file: ' + error.message, 'danger');
+            }
+        });
+
+        // Verify signature
+        verifyButton.addEventListener('click', async () => {
+            const file = document.querySelector('#verifyDragArea input').files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/verify', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                
+                verifyResult.style.display = 'block';
+                if (result.success) {
+                    verifyResult.className = `alert ${result.is_valid ? 'alert-success' : 'alert-danger'}`;
+                    verifyResult.textContent = result.message;
+                } else {
+                    verifyResult.className = 'alert alert-danger';
+                    verifyResult.textContent = result.message;
+                }
+            } catch (error) {
+                verifyResult.style.display = 'block';
+                verifyResult.className = 'alert alert-danger';
+                verifyResult.textContent = 'Lỗi xác thực: ' + error.message;
+            }
+        });
+
+        // Initial load of signed files
+        updateSignedFilesList();
+    </script>
+</body>
+</html> 
